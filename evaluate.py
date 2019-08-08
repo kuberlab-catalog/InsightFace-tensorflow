@@ -91,6 +91,50 @@ def run_embds(sess, images, batch_size, image_size, train_mode, embds_ph, image_
     return np.array(embds)
 
 
+def load_dataset(dataset_dir):
+    ds = dataset.get_dataset(dataset_dir, limit=50)
+    size = 0
+    for cls in ds:
+        size += len(cls.image_paths)
+
+    imgs_original = np.zeros([size, config['image_size'], config['image_size'], 3])
+    imgs = np.zeros([size * 2, config['image_size'], config['image_size'], 3])
+    imgs_cls = []
+    imgs_f_original = np.zeros([size, config['image_size'], config['image_size'], 3])
+    imgs_f = np.zeros([size * 2, config['image_size'], config['image_size'], 3])
+    issame = np.zeros([size], dtype=np.bool)
+
+    i = 0
+    for cls in ds:
+        for j, path in enumerate(cls.image_paths):
+            with open(path, 'rb') as f:
+                bin = f.read()
+            img, img_f = load_image(bin, config['image_size'])
+            imgs_original[i] = img
+            imgs_f_original[i] = img
+            imgs_cls.append(cls.name)
+            i += 1
+
+    # Expand dataset with random pairs
+    for i in range(len(imgs_original)):
+        if i % 2 == 0:
+            j = np.random.randint(0, len(imgs_original))
+        else:
+            j = np.random.randint(0, len(imgs_original))
+            while imgs_cls[i] != imgs_cls[j]:
+                j = np.random.randint(0, len(imgs_original))
+
+        imgs[i + i] = imgs_original[i]
+        imgs[i + i + 1] = imgs_original[j]
+
+        imgs_f[i + i] = imgs_f_original[i]
+        imgs_f[i + i + 1] = imgs_f_original[j]
+        issame[i] = imgs_cls[i] == imgs_cls[j]
+
+    return imgs, imgs_f, issame
+
+
+
 if __name__ == '__main__':
     args = get_args()
     if args.mode == 'build':
@@ -115,30 +159,8 @@ if __name__ == '__main__':
             print('evaluating...')
             val_data = {}
             if args.dataset_dir:
-                ds = dataset.get_dataset(args.dataset_dir, limit=20)
-                size = 0
-                for cls in ds:
-                    for path in cls.image_paths:
-                        size += 1
+                imgs, imgs_f, issame = load_dataset(args.dataset_dir)
 
-                imgs = np.zeros([size * 2, config['image_size'], config['image_size'], 3])
-                imgs_f = np.zeros([size * 2, config['image_size'], config['image_size'], 3])
-                issame = np.zeros([size * 2], dtype=np.bool)
-
-                i = 0
-                same = False
-                for cls in ds:
-                    same = not same
-                    for j, path in enumerate(cls.image_paths):
-                        with open(path, 'rb') as f:
-                            bin = f.read()
-                        img, img_f = load_image(bin, config['image_size'])
-                        imgs[i] = img
-                        imgs_f[i] = img
-                        issame[i] = same
-                        i += 1
-
-                # __import__('ipdb').set_trace()
                 print('forward running...')
                 embds_arr = run_embds(
                     sess, imgs, batch_size, config['image_size'], args.train_mode, embds, images,
@@ -175,4 +197,3 @@ if __name__ == '__main__':
                 print('done!')
     else:
         raise ValueError("Invalid value for --mode.")
-
