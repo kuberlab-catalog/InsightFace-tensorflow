@@ -22,6 +22,7 @@ def get_args():
     parser.add_argument('--model_path', type=str,
                         default='/data/hhd/InsightFace-tensorflow/output/20190116-130753/checkpoints/ckpt-m-116000',
                         help='model path')
+    parser.add_argument('--output_dir')
     parser.add_argument('--val_data', type=str, default='',
                         help='val data, a dict with key as data name, value as data path')
     parser.add_argument('--train_mode', type=int, default=0,
@@ -232,5 +233,50 @@ if __name__ == '__main__':
                     print('eval on %s: acc--%1.5f+-%1.5f, tar--%1.5f+-%1.5f@far=%1.5f' % (
                     k, acc_mean, acc_std, tar, tar_std, far))
                 print('done!')
+    elif args.mode == 'export':
+        if not args.output_dir:
+            raise RuntimeError('for mode export, please sprcify --output_dir')
+
+        config = yaml.load(open(args.config_path))
+        images = tf.placeholder(dtype=tf.float32, shape=[None, config['image_size'], config['image_size'], 3],
+                                name='input_image')
+        train_phase_dropout = tf.placeholder(dtype=tf.bool, shape=None, name='train_phase')
+        train_phase_bn = tf.placeholder(dtype=tf.bool, shape=None, name='train_phase_last')
+        embds, _ = get_embd(images, train_phase_dropout, train_phase_bn, config)
+        print('done!')
+        tf_config = tf.ConfigProto(allow_soft_placement=True)
+        tf_config.gpu_options.allow_growth = True
+
+        with tf.Session(config=tf_config) as sess:
+            tf.global_variables_initializer().run()
+            print('loading...')
+            saver = tf.train.Saver()
+            saver.restore(sess, args.model_path)
+
+            # sess.run(
+            #     [],
+            #     feed_dict={train_phase_dropout: False, train_phase_bn: False}
+            # )
+            tensor_in = tf.compat.v1.saved_model.build_tensor_info(images)
+            tensor_out = tf.compat.v1.saved_model.build_tensor_info(embds)
+            inputs = {images.name.split(':')[0].lower(): tensor_in}
+            outputs = {embds.name.split(':')[0].lower(): tensor_out}
+
+            prediction_signature = (
+                tf.saved_model.signature_def_utils.build_signature_def(
+                    inputs=inputs,
+                    outputs=outputs,
+                    method_name=tf.saved_model.signature_constants.PREDICT_METHOD_NAME
+                )
+            )
+            builder = tf.saved_model.builder.SavedModelBuilder(args.output_dir)
+            builder.add_meta_graph_and_variables(
+                sess, [tf.saved_model.tag_constants.SERVING],
+                signature_def_map={
+                    tf.saved_model.signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY:
+                        prediction_signature
+                })
+            builder.save()
+            tf.logging.info('Model saved to %s' % args.output_dir)
     else:
         raise ValueError("Invalid value for --mode.")
