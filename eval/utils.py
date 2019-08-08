@@ -73,8 +73,14 @@ def calculate_tar_far(threshold, dist, actual_issame):
     false_accept = np.sum(np.logical_and(predict_issame, np.logical_not(actual_issame)))
     n_same = np.sum(actual_issame)
     n_diff = np.sum(np.logical_not(actual_issame))
-    tar = float(true_accept) / float(n_same)
-    far = float(false_accept) / float(n_diff)
+    if n_same < 1:
+        tar = 1.
+    else:
+        tar = float(true_accept) / float(n_same)
+    if n_diff < 1:
+        far = 1.
+    else:
+        far = float(false_accept) / float(n_diff)
     return tar, far
 
 
