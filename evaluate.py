@@ -8,6 +8,7 @@ import tensorflow as tf
 
 from scipy import misc
 
+import dataset
 from model import get_embd
 from eval.utils import calculate_roc, calculate_tar
 
@@ -21,8 +22,19 @@ def get_args():
     parser.add_argument('--val_data', type=str, default='', help='val data, a dict with key as data name, value as data path')
     parser.add_argument('--train_mode', type=int, default=0, help='whether set train phase to True when getting embds. zero means False, one means True')
     parser.add_argument('--target_far', type=float, default=1e-3, help='target far when calculate tar')
+    parser.add_argument('--dataset_dir', help='path to dataset')
 
     return parser.parse_args()
+
+
+def load_image(bin: bytes, image_size=112):
+    img = misc.imread(io.BytesIO(bin))
+    img = misc.imresize(img, [image_size, image_size])
+    # img = img[s:s+image_size, s:s+image_size, :]
+    img_f = np.fliplr(img)
+    img = img / 127.5 - 1.0
+    img_f = img_f / 127.5 - 1.0
+    return img, img_f
 
 
 def load_bin(path, image_size):
@@ -35,18 +47,12 @@ def load_bin(path, image_size):
     # s = int(m/2)
     cnt = 0
     for bin in bins:
-        img = misc.imread(io.BytesIO(bin))
-        img = misc.imresize(img, [image_size, image_size])
-        # img = img[s:s+image_size, s:s+image_size, :]
-        img_f = np.fliplr(img)
-        img = img/127.5-1.0
-        img_f = img_f/127.5-1.0
+        img, img_f = load_image(bin, image_size)
         images[cnt] = img
         images_f[cnt] = img_f
         cnt += 1
     print('done!')
-    return (images, images_f, issame_list)
-
+    return images, images_f, issame_list
 
 
 def evaluate(embeddings, actual_issame, far_target=1e-3, distance_metric=0, nrof_folds=10):
@@ -108,20 +114,65 @@ if __name__ == '__main__':
             # batch_size = 32
             print('evaluating...')
             val_data = {}
-            if args.val_data == '':
+            if args.dataset_dir:
+                ds = dataset.get_dataset(args.dataset_dir, limit=20)
+                size = 0
+                for cls in ds:
+                    for path in cls.image_paths:
+                        size += 1
+
+                imgs = np.zeros([size * 2, config['image_size'], config['image_size'], 3])
+                imgs_f = np.zeros([size * 2, config['image_size'], config['image_size'], 3])
+                issame = np.zeros([size * 2], dtype=np.bool)
+
+                i = 0
+                same = False
+                for cls in ds:
+                    same = not same
+                    for j, path in enumerate(cls.image_paths):
+                        with open(path, 'rb') as f:
+                            bin = f.read()
+                        img, img_f = load_image(bin, config['image_size'])
+                        imgs[i] = img
+                        imgs_f[i] = img
+                        issame[i] = same
+                        i += 1
+
+                # __import__('ipdb').set_trace()
+                print('forward running...')
+                embds_arr = run_embds(
+                    sess, imgs, batch_size, config['image_size'], args.train_mode, embds, images,
+                    train_phase_dropout, train_phase_bn
+                )
+                embds_f_arr = run_embds(
+                    sess, imgs_f, batch_size, config['image_size'], args.train_mode, embds, images,
+                    train_phase_dropout, train_phase_bn
+                )
+                embds_arr = embds_arr / np.linalg.norm(embds_arr, axis=1, keepdims=True) + embds_f_arr / np.linalg.norm(
+                    embds_f_arr, axis=1, keepdims=True)
+                print('done!')
+                tpr, fpr, acc_mean, acc_std, tar, tar_std, far = evaluate(embds_arr, issame, far_target=args.target_far,
+                                                                          distance_metric=0)
+                print('eval: acc--%1.5f+-%1.5f, tar--%1.5f+-%1.5f@far=%1.5f' % (
+                    acc_mean, acc_std, tar, tar_std, far
+                ))
+
+            elif args.val_data == '':
                 val_data = config['val_data']
             else:
                 val_data[os.path.basename(args.val_data)] = args.val_data
-            for k, v in val_data.items():
-                imgs, imgs_f, issame = load_bin(v, config['image_size'])
-                print('forward running...')
-                embds_arr = run_embds(sess, imgs, batch_size, config['image_size'], args.train_mode, embds, images, train_phase_dropout, train_phase_bn)
-                embds_f_arr = run_embds(sess, imgs_f, batch_size, config['image_size'], args.train_mode, embds, images, train_phase_dropout, train_phase_bn)
-                embds_arr = embds_arr/np.linalg.norm(embds_arr, axis=1, keepdims=True)+embds_f_arr/np.linalg.norm(embds_f_arr, axis=1, keepdims=True)
+
+            if val_data:
+                for k, v in val_data.items():
+                    imgs, imgs_f, issame = load_bin(v, config['image_size'])
+                    print('forward running...')
+                    embds_arr = run_embds(sess, imgs, batch_size, config['image_size'], args.train_mode, embds, images, train_phase_dropout, train_phase_bn)
+                    embds_f_arr = run_embds(sess, imgs_f, batch_size, config['image_size'], args.train_mode, embds, images, train_phase_dropout, train_phase_bn)
+                    embds_arr = embds_arr/np.linalg.norm(embds_arr, axis=1, keepdims=True)+embds_f_arr/np.linalg.norm(embds_f_arr, axis=1, keepdims=True)
+                    print('done!')
+                    tpr, fpr, acc_mean, acc_std, tar, tar_std, far = evaluate(embds_arr, issame, far_target=args.target_far, distance_metric=1)
+                    print('eval on %s: acc--%1.5f+-%1.5f, tar--%1.5f+-%1.5f@far=%1.5f' % (k, acc_mean, acc_std, tar, tar_std, far))
                 print('done!')
-                tpr, fpr, acc_mean, acc_std, tar, tar_std, far = evaluate(embds_arr, issame, far_target=args.target_far, distance_metric=0)
-                print('eval on %s: acc--%1.5f+-%1.5f, tar--%1.5f+-%1.5f@far=%1.5f' % (k, acc_mean, acc_std, tar, tar_std, far))
-            print('done!')
     else:
         raise ValueError("Invalid value for --mode.")
 
