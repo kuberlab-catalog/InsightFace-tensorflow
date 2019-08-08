@@ -240,8 +240,8 @@ if __name__ == '__main__':
         config = yaml.load(open(args.config_path))
         images = tf.placeholder(dtype=tf.float32, shape=[None, config['image_size'], config['image_size'], 3],
                                 name='input_image')
-        train_phase_dropout = tf.placeholder(dtype=tf.bool, shape=None, name='train_phase')
-        train_phase_bn = tf.placeholder(dtype=tf.bool, shape=None, name='train_phase_last')
+        train_phase_dropout = tf.constant(False, dtype=tf.bool, shape=None, name='train_phase')
+        train_phase_bn = tf.constant(False, dtype=tf.bool, shape=None, name='train_phase_last')
         embds, _ = get_embd(images, train_phase_dropout, train_phase_bn, config)
         print('done!')
         tf_config = tf.ConfigProto(allow_soft_placement=True)
