@@ -92,7 +92,7 @@ def run_embds(sess, images, batch_size, image_size, train_mode, embds_ph, image_
 
 
 def load_dataset(dataset_dir):
-    ds = dataset.get_dataset(dataset_dir, limit=50)
+    ds = dataset.get_dataset(dataset_dir)
     size = 0
     for cls in ds:
         size += len(cls.image_paths)
